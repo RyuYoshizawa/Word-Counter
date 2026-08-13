@@ -14,17 +14,23 @@ core/             分析ロジック（Streamlit非依存、単体テスト可�
   tokenizer.py      Sudachiラッパー（Mode A/C、強制抽出の保護/復元、複合語検出、表記ゆれ適用）
   pos_rules.py      Sudachi品詞タグ → カテゴリのマッピング、既定除外セット
   frequency.py      単語頻度、品詞別語彙リスト、複合語頻度
-  network.py        共起行列、Jaccard係数（単語×単語・単語×属性値）、networkx→Plotly変換
+  network.py        共起行列、Jaccard係数（単語×単語・単語×属性値）、networkxグラフ構築（可視化は含まない）
+  network_viz.py    networkxグラフ → JSON化可能な辞書への変換（色・サイズ等のエンコーディングはui側の責務）
   clustering.py     Jaccard距離、scipy linkage/dendrogram
   wordcloud_gen.py  wordcloud.WordCloudラッパー
-  crosstab.py       GTインポート解析、クロス集計
+  codebook.py       コードブック方式のクロス集計（正規化語一致 or 原文部分文字列一致）
   variant_grouping.py  LLM表記ゆれ統合プロンプト/スキーマ
   fonts.py          日本語フォント解決（wordcloud・matplotlibで共有）
   project.py        プロジェクトファイル（.json）のシリアライズ/デシリアライズ
 ui/               画面（core/の結果をStreamlitで表示するだけ）
   sidebar.py        設定サイドバー（プロジェクト管理、入力方法3択：テキストファイル/貼り付け/Excel）
+  network_component.py  共起ネットワークのD3.js可視化HTML生成（st.iframeに渡す文字列を組み立てる）
+  network_template.html D3.jsのforce-directedグラフ本体（HTML/CSS/JS、プレースホルダ差し替え式）
   tab_*.py          機能別タブ
                   （日本語フォントはWindows標準搭載のNotoSansJP-VF.ttf等を実行時に解決、同梱ファイルなし）
+data/
+  pn_ja.dic         単語感情極性対応表（cp932）
+  vendor/d3.v7.min.js  D3.js本体（CDN非依存でローカルバンドル、network_component.pyがインライン埋め込み）
 ```
 
 **注**: 当初計画していた`core/jobs.py`（汎用バッチジョブ状態マシン）は、Phase 7のLLM表記ゆれ統合が単発呼び出しで済んだため未作成（5.2節参照、必要になった時点で追加）。
@@ -36,7 +42,7 @@ ui/               画面（core/の結果をStreamlitで表示するだけ）
 | streamlit | UIフレームワーク |
 | sudachipy + sudachidict_core | 形態素解析 |
 | pandas / openpyxl | 表形式データのI/O |
-| networkx / plotly | 共起ネットワークの計算・描画 |
+| networkx | 共起ネットワークの計算（グラフ構築のみ、描画はD3.js） |
 | scipy / matplotlib | クラスター分析（Ward法・Jaccard距離・デンドログラム） |
 | wordcloud | ワードクラウド生成 |
 | anthropic | LLM呼び出し（表記ゆれ統合） |
@@ -194,6 +200,20 @@ LLM提案を`st.session_state['pending_variant_groups']`に保持し、内容表
   - **検証**: 各変更をスタンドアロンスクリプトで検証（前後20語のトークン数の正確性、複合語の統一表記、色の複数品詞割当、太字ウェイトのキャッシュファイル名、縦書き禁止設定、ノードのテキスト位置とフォントサイズ）。マスク形状は実際に画像として保存し目視で「雲っぽさ」を確認。ブラウザでは全タブがエラー無く新しいUIで表示されることを確認。
   - **副次的な発見**: ユーザーから「既存プロジェクトを開くしかメニューに表示されない」という報告があったが、クリーンなブラウザセッションでは再現せず、ポート8502で2プロセス確認されたものの実際は1つのStreamlitサーバーの親子プロセス（正常）と判明。今日何度もコード変更・サーバー再起動を行った影響で、開きっぱなしのブラウザタブに古いセッション状態が残っていた可能性が高いと判断し、ハードリロードを案内した。
 - 2026-08-13（続き）: 本日最後の2件の要望に対応。
-  - **アイコン追加**: サイドバー最上部のタイトルを`st.sidebar.title('Word_Counter')`から`st.sidebar.title('👾 Word_Counter')`に変更（ユーザーの指定は画面左最上段）。あわせて`app.py`の`st.set_page_config`に`page_icon='👾'`を追加し、ブラウザタブのファビコンにも同じ絵文字を反映。
+  - **アイコン追加**: 当初はサイドバータイトルに`👾`絵文字を連結する方式（`st.sidebar.title('👾 Word_Counter')`）で実装したが、ユーザーから姉妹アプリAfter Coderのスクリーンショットが送られ「マークが小さい、姉妹アプリと同じサイズにしてほしい」と修正依頼。After Coderの実装（`app.py`の`st.logo(str(APP_DIR / 'after_coder_MARK.png'), size='large')`）を調査したところ、絵文字テキストではなく50×32pxのピンク色スペースインベーダーPNG画像を`st.logo(..., size='large')`でサイドバー最上部に大きく表示する方式だと判明。同じ仕組みを踏襲する目的で、いったんAfter Coderのマーク画像（`after_coder_MARK.png`、ピンク色）をそのまま`word_counter_MARK.png`としてコピーし、`app.py`に`st.logo(str(APP_DIR / 'word_counter_MARK.png'), size='large')`を追加、サイドバータイトルは`st.sidebar.title('Word_Counter')`（絵文字なし）に戻してAfter Coderと同じ構成に揃えた。あわせて`app.py`の`st.set_page_config`に`page_icon='👾'`を追加し、ブラウザタブのファビコンには引き続き絵文字を使用（st.logoはファビコンには影響しないため併用）。
+  - **マーク画像の差し替え**: 上記の暫定対応がAfter Coderのマーク画像をそのまま流用していたため、ユーザーから「姉妹版のマークをそのまま使っている、先に送ったファイルに置き換えて」と指摘。ユーザーが本日最初にこの機能を依頼した際に添付していた画像（水色のスペースインベーダー、50×32px PNG）をセッションのトランスクリプトファイル（jsonl）からbase64データとして復元し、`word_counter_MARK.png`を正しい画像で上書き。ファイルサイズ・寸法はAfter Coderのものと同一（`st.logo(size='large')`での見た目のサイズは揃ったまま）で、色のみ異なる。
   - **ストップワード**: サイドバーに強制抽出と同じ`st.text_area`パターンで「ストップワード」入力欄を新設（強制抽出の直後、品詞フィルタの前）。除外は正規化した見出し語（`Token.normalized`）の完全一致で行う。`core/frequency.py`の`_filter_tokens`（およびそれを使う`pos_frequency_table`/`word_frequency_table`/`word_category_map`）、`core/network.py`の`_doc_word_sets`（`build_cooccurrence_edges`経由）、`core/clustering.py`の`build_word_doc_matrix`に`stopwords`引数を追加し、出現語一覧・ワードクラウド・共起ネットワーク・クラスター分析の集計から除外されるようにした。原文コンテキスト表示（`core/context.py`の`find_word_contexts`が使う`doc_tokens`/`doc_tokens_mode_c`）とクロス集計（コードブックのトリガーは明示的な語なのでストップワードの対象外という設計判断）には適用していない。プロジェクトファイル（`core/project.py`）にも`stopwords`フィールドを追加したが、旧バージョンのプロジェクトファイルとの後方互換のため必須キーには含めず、読み込み時は`project.get('stopwords', [])`で欠損時は空リスト扱いにしている。
   - **検証**: `_filter_tokens`/`_doc_word_sets`/`build_word_doc_matrix`それぞれについて、ストップワード指定前後で対象語が期待通り増減することをスタンドアロンスクリプトで確認（例: 「天気」を4回含むサンプル文書でストップワード指定前は出現語一覧に行があり指定後は消えること、共起ネットワーク・クラスター分析の対象語集合からも除外されること）。ブラウザでも新しいサイドバーUI（ストップワード入力欄が強制抽出の直後に表示されること）とアイコン表示（サイドバータイトル・ブラウザタブ）をクリーンな`streamlit run`起動後に確認、エラー無し。
+
+- 2026-08-14（新セッション）: ユーザーから次回作業の方向性を確認。コンセプトを「アナリストの読解センスを活かしたテキストマイニングエージェント」と定義し、出現語一覧タブ（品詞フィルタ・ストップワード変更に対するリアルタイム反映＋原文確認）を体現例として高評価。残タスクの優先順位は①クロス集計のコーディング機能、②共起ネットワークの抜本改革、③ワードクラウド・クラスター分析のグラフィック強化——今回は②から着手。
+
+**共起ネットワークマップのD3.js全面刷新（Plotlyから移行）**: EnterPlanModeで設計（求める体験を確認: (a)出現語一覧と同じリアルタイム性、(b)見た目・デザインの刷新、(c)大規模データでの見やすさ改善——「ノード操作のインタラクティブ性」は必須要件から明示的に除外）。設計フェーズでPlanエージェントに技術検証を依頼し、重要な発見を得た: インストール済みStreamlit 1.61.1では`st.components.v1.html`が既に非推奨で、後継の`st.iframe(src, width=..., height=...)`を使うべきと判明（実機のシグネチャで確認）。
+
+- **アーキテクチャ**: 可視化のエンコーディング（色・サイズ・エッジ太さ）を完全にJS側の責務とし、`core/network.py`はグラフ統計のみを扱う（`core/`＝Streamlit非依存という既存の設計原則を維持）。新規`core/network_viz.py`の`graph_to_json_dict(g)`がnetworkxグラフを`{nodes, links, max_freq}`のJSON化可能な辞書に変換。新規`ui/network_component.py`の`build_network_html()`が、`ui/network_template.html`（D3のforce-directedグラフ一式）のプレースホルダをテンプレート文字列置換（`str.format()`はJS/CSSの`{}`と、`string.Template`はES6テンプレートリテラルの`${...}`とそれぞれ衝突するため単純な`.replace()`を採用）で埋めてHTML文字列を組み立て、`ui/tab_network.py`が`st.iframe(html, width=width, height=height)`で埋め込む。毎rerunでHTML文字列を丸ごと再生成し新しいiframeとして描画する一方向モデル（他の全タブと同じ「毎rerunで結果を丸ごと再計算・再描画」というパターンに準拠、JS→Pythonの通信は無し、`declare_component`ベースの本格的なカスタムコンポーネントは不要と判断）。
+- **D3.js本体**（v7、約280KB）はCDN参照ではなく`data/vendor/d3.v7.min.js`にローカルバンドルし、生成HTMLの`<script>`タグにインライン埋め込み——外部ネットワークリクエストを一切発生させないため、オフライン環境でも動作する。
+- **可視化のデザイン刷新**: 旧KH-Coder風の配色（`_WORD_DEGREE_COLORS`の4色・`_ATTR_COLOR`の赤）を廃止し、After Coderと共有する`core/wordcloud_gen.CHART_COLORS`パレットを採用——単語ノードは接続属性数（`attr_degree`）に応じ`#83C9FF`（低）〜`#0068C9`（高）のグラデーション、属性値ノードは`#FF8700`（暖色）、属性マッピング無し時は単語一色`#0068C9`。ノードサイズは既存の22〜60px線形スケールをD3の`scaleLinear`で再現。エッジ太さ・不透明度は、旧来の四分位ビン分け（`_bin_edges_by_weight`、Plotlyのトレース分割のため必要だった）を廃止し、生のJaccard係数から連続的にスケールするよう簡素化。
+- **大規模データでの見やすさ改善**: `d3.forceCollide`でノード重なりを抑制、ラベルは頻度中央値以上のノードのみ常時表示（それ以外はホバー時にツールチップ表示）、`d3.zoom()`によるズーム・パンで密集部分を拡大可能に。
+- **仕様変更**: 表示設定の「エッジに係数を表示」チェックボックスの意味を「常時オンキャンバス表示」から「ホバーで係数を表示」（`show_edge_labels`引数はそのまま、ホバー時のツールチップ表示可否に用途を変更）に再定義——常時表示だと`max_edges=300`時に大規模データ目標(c)と矛盾するクラッター源になるため。
+- **テーマ対応**: `st.context.theme.type`（'light'/'dark'/None）を読み取り、iframe内の背景・文字色をStreamlitの既定テーマ色に追従させる（`srcdoc`のiframeは独立ドキュメントで親ページのCSSを継承できないため、明示的に色を渡す必要がある）。
+- **削除**: `core/network.py`から`to_plotly_figure`/`_node_trace`/`_size_legend_traces`/`_bin_edges_by_weight`/`_node_size`等のPlotly専用コードを全て削除（Jaccard係数計算のロジック自体（`build_cooccurrence_edges`/`build_graph`等）は変更なし）。`plotly`パッケージへの参照が本タブ以外に存在しないことをgrepで確認した上で`pyproject.toml`から依存を削除。
+- **検証**: `core/network_viz.graph_to_json_dict`をスタンドアロンスクリプトで検証（`nodes`/`links`/`max_freq`の形、JSON往復）。`ui/network_component.build_network_html`もスタンドアロンスクリプトでプレースホルダの置換漏れが無いこと・light/dark両テーマで正しい配色になることを確認。実際の統合検証には、サイドバーのラジオボタンクリックがブラウザ自動操作で反応しない問題（BaseWebのカスタムラジオコンポーネント特有の挙動、既知の環境制約の新たな一例）が発生したため、一時的な検証用Streamlitハーネス（`tab_network.render()`を合成データで直接呼び出す小さなスクリプト、検証後削除）を実際に`streamlit run`で起動し、ブラウザの`iframe.contentDocument`を`javascript_tool`経由で直接クエリして検証: 単語のみのケース（5単語・10エッジ）で`<circle>`5個・`<line>`10個が生成されることを確認、属性値込みのケース（27単語・3属性値・136エッジ）で`<circle>`27個・`<rect>`3個・`<line>`136個が生成されることを確認——Python側の計算結果とD3側の描画結果が完全に一致。ノードの`fill`色（`rgb(0, 104, 201)`=`#0068C9`、属性値`#FF8700`）・半径・エッジの`stroke-width`/`stroke-opacity`も設計通りの値であることを直接確認。`read_network_requests`でd3js.org等への外部リクエストが一切発生していないことも確認。`read_console_messages`でJSエラー無し。クリーンな`streamlit run`起動後、本体アプリ（`app.py`）もエラー無く起動することを確認。

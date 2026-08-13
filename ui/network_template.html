@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: __WC_BG__; }
+  #graph { width: __WC_WIDTH__px; height: __WC_HEIGHT__px; }
+  svg { display: block; font-family: "Yu Gothic", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif; }
+  .node-label {
+    fill: __WC_FG__;
+    pointer-events: none;
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  #tooltip {
+    position: absolute;
+    display: none;
+    max-width: 260px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: __WC_FG__;
+    color: __WC_BG__;
+    font-family: "Yu Gothic", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+    font-size: 12px;
+    line-height: 1.4;
+    pointer-events: none;
+    white-space: pre-line;
+    z-index: 10;
+  }
+</style>
+</head>
+<body>
+<div id="graph"></div>
+<div id="tooltip"></div>
+<script>__WC_D3_SOURCE__</script>
+<script>
+(function () {
+  const DATA = __WC_GRAPH_DATA_JSON__;
+  const width = __WC_WIDTH__;
+  const height = __WC_HEIGHT__;
+  const showEdgeCoef = __WC_SHOW_EDGE_LABELS__;
+  const FG = "__WC_FG__";
+
+  const WORD_LOW = "#83C9FF";
+  const WORD_HIGH = "#0068C9";
+  const ATTR_COLOR = "#FF8700";
+
+  const maxFreq = Math.max(1, DATA.max_freq);
+  const sizeScale = d3.scaleLinear().domain([0, maxFreq]).range([11, 30]).clamp(true);
+
+  const degrees = DATA.nodes.filter(d => d.node_type === 'word' && d.attr_degree != null).map(d => d.attr_degree);
+  const maxDegree = degrees.length ? Math.max(3, ...degrees) : 0;
+  const wordColorScale = d3.scaleLinear().domain([0, maxDegree]).range([WORD_LOW, WORD_HIGH]).clamp(true);
+  const hasAttrDegree = degrees.length > 0;
+
+  function colorFor(d) {
+    if (d.node_type === 'attr') return ATTR_COLOR;
+    if (hasAttrDegree && d.attr_degree != null) return wordColorScale(d.attr_degree);
+    return WORD_HIGH;
+  }
+
+  const weights = DATA.links.map(d => d.weight);
+  const minW = weights.length ? Math.min(...weights) : 0;
+  const maxW = weights.length ? Math.max(...weights) : 1;
+  const edgeWidthScale = d3.scaleLinear().domain([minW, maxW]).range([1, 5]).clamp(true);
+  const edgeOpacityScale = d3.scaleLinear().domain([minW, maxW]).range([0.15, 0.85]).clamp(true);
+
+  // ラベルは頻度上位半分のみ常時表示、残りはホバー時のみツールチップで表示
+  // （全ノード常時ラベルだと大規模データで読みにくくなるため）
+  const sortedFreq = DATA.nodes.map(d => d.freq).sort((a, b) => a - b);
+  const medianFreq = sortedFreq.length ? sortedFreq[Math.floor(sortedFreq.length / 2)] : 0;
+  const labelFontSize = Math.max(8, Math.min(13, 14 - 0.02 * DATA.nodes.length));
+
+  const svg = d3.select('#graph').append('svg')
+      .attr('viewBox', [0, 0, width, height])
+      .attr('width', width)
+      .attr('height', height);
+  const zoomLayer = svg.append('g');
+
+  const tooltip = d3.select('#tooltip');
+
+  const simulation = d3.forceSimulation(DATA.nodes)
+      .force('link', d3.forceLink(DATA.links).id(d => d.id).distance(60).strength(0.3))
+      .force('charge', d3.forceManyBody().strength(-140))
+      .force('center', d3.forceCenter(width / 2, height / 2))
+      .force('collide', d3.forceCollide(d => sizeScale(d.freq) + 3))
+      .alphaDecay(0.05);
+
+  const link = zoomLayer.append('g')
+      .attr('stroke', FG)
+      .selectAll('line')
+      .data(DATA.links)
+      .join('line')
+      .attr('stroke-width', d => edgeWidthScale(d.weight))
+      .attr('stroke-opacity', d => edgeOpacityScale(d.weight));
+
+  if (showEdgeCoef) {
+    link.on('mouseenter', (event, d) => {
+      showTooltip(event, `係数: ${d.weight.toFixed(2)}`);
+    }).on('mousemove', moveTooltip).on('mouseleave', hideTooltip);
+  }
+
+  const nodeG = zoomLayer.append('g')
+      .selectAll('g')
+      .data(DATA.nodes)
+      .join('g')
+      .style('cursor', 'default');
+
+  nodeG.each(function (d) {
+    const sel = d3.select(this);
+    const r = sizeScale(d.freq);
+    if (d.node_type === 'attr') {
+      const s = r * 1.7;
+      sel.append('rect')
+          .attr('x', -s / 2).attr('y', -s / 2)
+          .attr('width', s).attr('height', s)
+          .attr('fill', colorFor(d))
+          .attr('stroke', '#fff').attr('stroke-width', 1);
+    } else {
+      sel.append('circle')
+          .attr('r', r)
+          .attr('fill', colorFor(d))
+          .attr('stroke', '#fff').attr('stroke-width', 1);
+    }
+  });
+
+  nodeG.filter(d => d.freq >= medianFreq)
+      .append('text')
+      .attr('class', 'node-label')
+      .attr('font-size', labelFontSize)
+      .text(d => d.id);
+
+  nodeG.on('mouseenter', (event, d) => {
+    const kind = d.node_type === 'attr' ? '属性値' : '単語';
+    const degreeLine = (d.node_type === 'word' && d.attr_degree != null) ? `\n接続属性数: ${d.attr_degree}` : '';
+    showTooltip(event, `${d.id}（${kind}・出現文書数: ${d.freq}）${degreeLine}`);
+  }).on('mousemove', moveTooltip).on('mouseleave', hideTooltip);
+
+  function showTooltip(event, text) {
+    tooltip.style('display', 'block').text(text);
+    moveTooltip(event);
+  }
+  function moveTooltip(event) {
+    const [x, y] = d3.pointer(event, document.body);
+    tooltip.style('left', (x + 12) + 'px').style('top', (y + 12) + 'px');
+  }
+  function hideTooltip() {
+    tooltip.style('display', 'none');
+  }
+
+  simulation.on('tick', () => {
+    link
+        .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+    nodeG.attr('transform', d => `translate(${d.x},${d.y})`);
+  });
+
+  svg.call(d3.zoom().scaleExtent([0.3, 5]).on('zoom', (event) => {
+    zoomLayer.attr('transform', event.transform);
+  }));
+})();
+</script>
+</body>
+</html>

@@ -22,7 +22,7 @@ _PROJECT_RESET_KEYS = [
 
 
 def render_sidebar() -> dict:
-    st.sidebar.title('👾 Word_Counter')
+    st.sidebar.title('Word_Counter')
     st.sidebar.caption('日本語テキストマイニングツール')
     st.sidebar.divider()
 

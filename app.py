@@ -4,6 +4,8 @@ Word_Counter: 薄いオーケストレーター。page_config・session_state初
 サイドバー呼び出し・タブ振り分けのみを担う。分析ロジックはcore/、画面はui/に分離。
 """
 
+from pathlib import Path
+
 import streamlit as st
 
 from core.tokenizer import (
@@ -25,7 +27,10 @@ from ui import (
     tab_wordcloud,
 )
 
+APP_DIR = Path(__file__).parent
+
 st.set_page_config(page_title='Word_Counter', page_icon='👾', layout='wide')
+st.logo(str(APP_DIR / 'word_counter_MARK.png'), size='large')
 
 st.session_state.setdefault('_tokenize_cache_key', None)
 st.session_state.setdefault('_doc_tokens_cache', [])

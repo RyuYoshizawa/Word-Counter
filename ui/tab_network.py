@@ -1,13 +1,15 @@
 """
 tab_network.py
-共起ネットワークマップタブ。Jaccard係数に基づく共起ネットワークをPlotlyで表示する。
+共起ネットワークマップタブ。Jaccard係数に基づく共起ネットワークをD3.js（st.iframe埋め込み）で表示する。
 属性列（Excel入力時）が指定されていれば、単語×属性値のマッピングも表示できる。
 """
 
 import streamlit as st
 
-from core.network import attr_value_doc_sets, build_cooccurrence_edges, build_graph, to_plotly_figure
+from core.network import attr_value_doc_sets, build_cooccurrence_edges, build_graph
+from core.network_viz import graph_to_json_dict
 from ui.common import pos_filter_caption
+from ui.network_component import build_network_html
 
 
 def render(doc_tokens: list, doc_attrs: list[dict], included_categories: set,
@@ -31,7 +33,7 @@ def render(doc_tokens: list, doc_attrs: list[dict], included_categories: set,
         with col3:
             max_edges = st.slider('最大エッジ数（語×語）', min_value=10, max_value=300, value=100, step=10)
         with col4:
-            show_edge_labels = st.checkbox('エッジに係数を表示', value=True)
+            show_edge_labels = st.checkbox('ホバーで係数を表示', value=True)
 
         col5, col6, col7, col8 = st.columns(4)
         with col5:
@@ -60,8 +62,11 @@ def render(doc_tokens: list, doc_attrs: list[dict], included_categories: set,
         return
 
     g = build_graph(freq, word_word_edges, word_attr_edges, node_types=node_types, max_word_edges=max_edges)
-    fig = to_plotly_figure(g, width=width, height=height, show_edge_labels=show_edge_labels)
-    st.plotly_chart(fig, use_container_width=False)
+    payload = graph_to_json_dict(g)
+    theme_type = st.context.theme.type
+    html = build_network_html(payload, width=width, height=height,
+                               show_edge_labels=show_edge_labels, theme_type=theme_type)
+    st.iframe(html, width=width, height=height)
 
     n_words = sum(1 for n in g.nodes() if g.nodes[n].get('node_type') == 'word')
     n_attrs = g.number_of_nodes() - n_words
