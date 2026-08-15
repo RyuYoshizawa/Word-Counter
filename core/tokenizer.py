@@ -48,6 +48,24 @@ class Token:
     is_compound: bool = False  # Mode A/C差分で検出された複合語かどうか（品詞フィルタの判定には使わず、表示専用）
 
 
+@lru_cache(maxsize=1)
+def available_dict_types() -> list[str]:
+    """
+    インストール済みのSudachi辞書種別を返す（サイドバーの選択肢用）。
+    sudachidict_fullは350MB近くあり、デプロイ先（Streamlit Community Cloud等の
+    リソース制限環境）ではcoreのみを同梱する運用を想定しているため、'full'は実際に
+    importできる場合のみ選択肢に含める——同梱していない環境でも選んでエラーになる
+    ことがないようにする。
+    """
+    types = ['core']
+    try:
+        import sudachidict_full  # noqa: F401
+        types.append('full')
+    except ImportError:
+        pass
+    return types
+
+
 @lru_cache(maxsize=4)
 def _get_dictionary(dict_type: str = "core"):
     """SudachiのDictionaryオブジェクトを辞書種別ごとにキャッシュして生成する"""
@@ -166,6 +184,31 @@ def _detect_compounds_in_chunk(text: str, dict_type: str) -> list[Token]:
             ))
         a_index = j
     return compounds
+
+
+# 共起ネットワークの集計単位を「文」にする場合に使う、文末記号での分割。既存の品詞判定
+# ロジック（core/pos_rules.py）は句読点の種別を区別しないため、ここでは表層形の直接判定という
+# シンプルな方式にした（_NEGATIVE_AUX_FORMS等、このプロジェクトの既存スタイルに合わせている）。
+# 文末記号。core/context.pyの原文コンテキスト抽出（文単位表示）とも共有するため公開定数にしている。
+SENTENCE_END_MARKS = {'。', '！', '？', '…'}
+
+
+def split_into_sentences(tokens: list[Token]) -> list[list[Token]]:
+    """
+    トークン列を文（文末記号の直後）で分割する。末尾に文末記号が無ければ残りを1文として扱う。
+    文末記号が連続する場合（例:「！？」）、記号のみの短い「文」が生まれることがあるが、
+    品詞フィルタで除外される想定のため実害はない。
+    """
+    sentences: list[list[Token]] = []
+    current: list[Token] = []
+    for t in tokens:
+        current.append(t)
+        if t.surface in SENTENCE_END_MARKS:
+            sentences.append(current)
+            current = []
+    if current:
+        sentences.append(current)
+    return sentences
 
 
 def apply_variant_map(tokens: list[Token], variant_map: dict[str, str]) -> list[Token]:

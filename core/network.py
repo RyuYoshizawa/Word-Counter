@@ -12,9 +12,27 @@ from typing import Literal
 import networkx as nx
 
 from .pos_rules import map_pos
-from .tokenizer import Token
+from .tokenizer import Token, split_into_sentences
 
 NodeType = Literal['word', 'attr']
+
+
+def expand_to_sentence_units(doc_tokens: list[list[Token]],
+                              doc_attrs: list[dict]) -> tuple[list[list[Token]], list[dict]]:
+    """
+    文書ごとのトークン列を文単位に展開する（共起ネットワークの集計単位を「段落（文書）」
+    ではなく「文」にする場合に使う）。各文は元の文書の属性（doc_attrs）をそのまま引き継ぐ。
+    build_cooccurrence_edges/attr_value_doc_setsは「文書」という概念に依存しない汎用設計
+    （渡されたリストをただの集計単位の列として扱う）ため、呼び出し側でこの関数の戻り値
+    （unit_tokens, unit_attrs）を両方セットで渡せば、それ以上の変更なく「文」単位の集計になる。
+    """
+    unit_tokens: list[list[Token]] = []
+    unit_attrs: list[dict] = []
+    for tokens, attrs in zip(doc_tokens, doc_attrs):
+        for sentence in split_into_sentences(tokens):
+            unit_tokens.append(sentence)
+            unit_attrs.append(attrs)
+    return unit_tokens, unit_attrs
 
 
 def _doc_word_sets(doc_tokens: list[list[Token]], included_categories: set[str] | None,
@@ -116,10 +134,14 @@ def build_cooccurrence_edges(
 def build_graph(freq: dict[str, int], word_word_edges: list[tuple[str, str, float]],
                  word_attr_edges: list[tuple[str, str, float]] | None = None,
                  node_types: dict[str, NodeType] | None = None,
-                 edge_threshold: float = 0.0, max_word_edges: int | None = 100) -> nx.Graph:
+                 edge_threshold: float = 0.0, max_word_edges: int | None = 100,
+                 max_attr_edges: int | None = 60) -> nx.Graph:
     """
-    共起エッジからnetworkxグラフを構築する。語×語エッジのみJaccard係数上位max_word_edges本に
-    絞り込み、語×属性値エッジは（既に候補数が絞られているため）全て採用する。
+    共起エッジからnetworkxグラフを構築する。語×語エッジ・語×属性値エッジはそれぞれ
+    Jaccard係数上位max_word_edges本・max_attr_edges本に絞り込む（単語ごとの上限ではなく、
+    エッジ全体からのグローバルな上位N本——KH Coderの実HTML出力を解析した結果、単語ごとに
+    1本に制限するのではなく、係数の高い順にグローバルに足切りしているだけで、複数属性に
+    強く繋がる語は自然に複数エッジが残ることが分かったため、同じ方式に揃えた）。
     """
     filtered_ww = [e for e in word_word_edges if e[2] >= edge_threshold]
     filtered_ww.sort(key=lambda e: e[2], reverse=True)
@@ -127,6 +149,9 @@ def build_graph(freq: dict[str, int], word_word_edges: list[tuple[str, str, floa
         filtered_ww = filtered_ww[:max_word_edges]
 
     filtered_wa = [e for e in (word_attr_edges or []) if e[2] >= edge_threshold]
+    filtered_wa.sort(key=lambda e: e[2], reverse=True)
+    if max_attr_edges is not None:
+        filtered_wa = filtered_wa[:max_attr_edges]
 
     g = nx.Graph()
     for w1, w2, jac in filtered_ww + filtered_wa:

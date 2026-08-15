@@ -8,6 +8,7 @@ import streamlit as st
 
 from core.pos_rules import CATEGORY_ORDER, DEFAULT_INCLUDED_CATEGORIES
 from core.project import build_project, deserialize_project, serialize_project
+from core.tokenizer import available_dict_types
 
 INPUT_METHODS = ['テキストファイル', '貼り付け', 'Excel（ID・属性列あり）']
 
@@ -16,8 +17,10 @@ _PROJECT_RESET_KEYS = [
     'input_method', 'pasted_text_input', 'dict_type', 'forced_terms_text', 'stopwords_text',
     'xlsx_documents', 'xlsx_text_col', 'xlsx_id_col', 'xlsx_attr_cols',
     '_restored_documents', '_restored_joined_text', '_loaded_project_file_id',
-    'variant_map', 'pending_variant_groups',
+    'variant_map', 'pending_variant_groups', 'codebook_text',
     'new_project_name', 'new_project_description',
+    '_forced_terms_text_pending', '_forced_terms_text_loaded_file_id',
+    '_stopwords_text_pending', '_stopwords_text_loaded_file_id',
 ]
 
 
@@ -44,12 +47,14 @@ def render_sidebar() -> dict:
 
     st.sidebar.divider()
     st.sidebar.subheader('形態素解析')
-    dict_type = st.sidebar.selectbox('Sudachi辞書', ['core', 'full'], index=0, key='dict_type',
+    dict_type = st.sidebar.selectbox('Sudachi辞書', available_dict_types(), index=0, key='dict_type',
                                       help='coreは一般語彙とサイズのバランス重視。'
-                                           'fullは固有名詞・専門用語に強いが辞書サイズが大きい')
+                                           'fullは固有名詞・専門用語に強いが辞書サイズが大きい'
+                                           '（未インストールの環境では選択肢に出ません）')
 
     st.sidebar.divider()
     st.sidebar.subheader('強制抽出')
+    _render_list_upload_download('forced_terms_text', '強制抽出リスト', 'forced_terms')
     forced_terms_text = st.sidebar.text_area(
         '強制抽出リスト（1行1語句、上ほど優先）', height=100, key='forced_terms_text',
         help='語句をトークナイザの分割に優先して1語として扱う。'
@@ -59,6 +64,7 @@ def render_sidebar() -> dict:
 
     st.sidebar.divider()
     st.sidebar.subheader('ストップワード')
+    _render_list_upload_download('stopwords_text', 'ストップワードリスト', 'stopwords')
     stopwords_text = st.sidebar.text_area(
         'ストップワード（1行1語、正規化した見出し語で指定）', height=100, key='stopwords_text',
         help='ここに書いた語は、出現語一覧・ワードクラウド・共起ネットワーク・クラスター分析の'
@@ -96,6 +102,60 @@ def render_sidebar() -> dict:
     }
 
 
+def _render_list_upload_download(text_area_key: str, label: str, file_stem: str) -> None:
+    """
+    強制抽出・ストップワードのテキストエリアに、txtでのダウンロード/アップロードを追加する。
+    アップロードは既存の内容を丸ごと上書きするため、プロジェクトJSONアップロード
+    （`_render_project_start`）と同じfile_id追跡パターンで「既に処理済みの同一ファイルか」を
+    判定した上で、件数を添えた警告＋明示的な確認/キャンセルボタンを挟んでから反映する
+    （誤操作で既存リストを失わないため）。
+    """
+    current_text = st.session_state.get(text_area_key, '')
+    st.sidebar.download_button(
+        f'💾 {label}をダウンロード', data=current_text, file_name=f'{file_stem}.txt',
+        mime='text/plain', disabled=not current_text.strip(),
+        key=f'{text_area_key}_download', use_container_width=True,
+    )
+
+    uploaded = st.sidebar.file_uploader(
+        f'{label}をアップロード（.txt、1行1語句）', type=['txt'], key=f'{text_area_key}_uploader',
+    )
+    pending_key = f'_{text_area_key}_pending'
+    loaded_id_key = f'_{text_area_key}_loaded_file_id'
+    if uploaded is not None and uploaded.file_id != st.session_state.get(loaded_id_key):
+        st.session_state[loaded_id_key] = uploaded.file_id
+        st.session_state[pending_key] = uploaded.read().decode('utf-8-sig')
+
+    pending = st.session_state.get(pending_key)
+    if pending is not None:
+        current_count = len([line for line in current_text.splitlines() if line.strip()])
+        new_count = len([line for line in pending.splitlines() if line.strip()])
+        st.sidebar.warning(
+            f'⚠️ アップロードすると現在の{label}（{current_count}件）を、'
+            f'アップロードした内容（{new_count}件）で上書きします。'
+        )
+        with st.sidebar.expander('アップロード内容を確認', expanded=False):
+            st.text(pending)
+        col_ok, col_cancel = st.sidebar.columns(2)
+        with col_ok:
+            if st.button('✅ 上書きする', key=f'{text_area_key}_confirm', use_container_width=True):
+                st.session_state[text_area_key] = pending
+                st.session_state[pending_key] = None
+                st.rerun()
+        with col_cancel:
+            if st.button('❌ キャンセル', key=f'{text_area_key}_cancel', use_container_width=True):
+                st.session_state[pending_key] = None
+                # このcallback内で完結するst.rerun()は、text_areaウィジェット自体が
+                # この実行中に一度も呼ばれないまま中断される（_render_list_upload_downloadは
+                # text_area呼び出しより前に置かれているため）。Streamlitは「その回の実行で
+                # 登録されなかったウィジェットの値」を次の実行までに破棄してしまうため、
+                # 何もせず単にrerunするとキャンセルのはずが既存の入力内容を消してしまう
+                # （実機で確認した実際の不具合）。現在値をそのまま書き戻して明示的に
+                # 「登録済み」の状態を維持してからrerunする。
+                st.session_state[text_area_key] = current_text
+                st.rerun()
+
+
 def _render_project_start() -> None:
     st.sidebar.subheader('プロジェクト')
     with st.sidebar.expander('📂 既存プロジェクトを開く'):
@@ -127,13 +187,20 @@ def _restore_project_state(project: dict) -> None:
     st.session_state['pasted_text_input'] = joined_text
     st.session_state['_restored_documents'] = project['documents']
     st.session_state['_restored_joined_text'] = joined_text
-    st.session_state['dict_type'] = project['dict_type']
+    # 保存時にfullを選んでいても、復元先の環境にsudachidict_fullが無ければ
+    # selectboxの選択肢に無い値になってしまう（Streamlitがエラーになる）ため、
+    # その環境で実際に使える辞書種別に丸める。
+    restored_dict_type = project['dict_type']
+    if restored_dict_type not in available_dict_types():
+        restored_dict_type = 'core'
+    st.session_state['dict_type'] = restored_dict_type
     st.session_state['forced_terms_text'] = '\n'.join(project['forced_terms'])
     st.session_state['stopwords_text'] = '\n'.join(project.get('stopwords', []))
     for cat in CATEGORY_ORDER:
         st.session_state[f'pos_cat_{cat}'] = cat in project['included_categories']
     st.session_state['variant_map'] = project.get('variant_map', {})
     st.session_state['pending_variant_groups'] = None
+    st.session_state['codebook_text'] = project.get('codebook', '')
     # project本体は、データ読み込みセクション実行後にdocumentsが揃ってから_sync_or_create_projectで作る
 
 
@@ -168,6 +235,7 @@ def _sync_or_create_project(input_method: str, documents: list[dict], dict_type:
     """documents等が揃った時点でプロジェクトを新規作成し、以降は毎レンダリング最新状態に同期する"""
     project = st.session_state['project']
     variant_map = st.session_state.get('variant_map', {})
+    codebook_text = st.session_state.get('codebook_text', '')
 
     if project is None:
         new_name = st.session_state.get('new_project_name', '').strip()
@@ -177,7 +245,7 @@ def _sync_or_create_project(input_method: str, documents: list[dict], dict_type:
                 description=st.session_state.get('new_project_description', '').strip(),
                 input_method=input_method, documents=documents, dict_type=dict_type,
                 forced_terms=forced_terms, included_categories=sorted(included_categories),
-                variant_map=variant_map, stopwords=sorted(stopwords),
+                variant_map=variant_map, stopwords=sorted(stopwords), codebook=codebook_text,
             )
             st.rerun()
         return
@@ -190,6 +258,7 @@ def _sync_or_create_project(input_method: str, documents: list[dict], dict_type:
         'included_categories': sorted(included_categories),
         'variant_map': variant_map,
         'stopwords': sorted(stopwords),
+        'codebook': codebook_text,
     })
 
 

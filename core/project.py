@@ -18,7 +18,8 @@ _REQUIRED_KEYS = {
 
 def build_project(name: str, description: str, input_method: str, documents: list[dict],
                    dict_type: str, forced_terms: list[str], included_categories: list[str],
-                   variant_map: dict[str, str], stopwords: list[str] | None = None) -> dict:
+                   variant_map: dict[str, str], stopwords: list[str] | None = None,
+                   codebook: str = '') -> dict:
     """プロジェクトdictを組み立てる"""
     return {
         'schema_version': PROJECT_SCHEMA_VERSION,
@@ -32,6 +33,7 @@ def build_project(name: str, description: str, input_method: str, documents: lis
         'included_categories': included_categories,
         'variant_map': variant_map,
         'stopwords': stopwords or [],
+        'codebook': codebook,
     }
 
 

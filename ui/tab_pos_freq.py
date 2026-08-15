@@ -1,7 +1,7 @@
 """
 tab_pos_freq.py
-出現語一覧タブ。左に語×品詞×出現数の表、右に選択した語を含む原文の該当箇所（前後20語、
-該当語は太字）を一覧表示する。単語/複合語/混在の表示モードを切り替えられる。
+出現語一覧タブ。左に語×品詞×出現数の表、右に選択した語を含む原文の該当箇所
+（その語を含む文単位、該当語は太字）を一覧表示する。単語/複合語/混在の表示モードを切り替えられる。
 """
 
 import streamlit as st
@@ -58,7 +58,7 @@ def render(tokens: list, doc_tokens: list, doc_ids: list, doc_compounds: list,
             is_compound_row = row['品詞カテゴリ'] == '（複）'
             context_source = doc_tokens_mode_c if is_compound_row else doc_tokens
             contexts = find_word_contexts(selected_word, context_source, doc_ids)
-            st.caption(f'「{selected_word}」を含む原文: {len(contexts)}件（前後20語、該当語は太字）')
+            st.caption(f'「{selected_word}」を含む原文: {len(contexts)}件（該当語を含む文、該当語は赤字太字）')
             with st.container(height=460):
                 for c in contexts:
-                    st.markdown(f"`{c['doc_id']}` {c['before']}**{c['matched']}**{c['after']}")
+                    st.markdown(f"`{c['doc_id']}` {c['before']}:red[**{c['matched']}**]{c['after']}")

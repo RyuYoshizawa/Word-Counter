@@ -104,7 +104,7 @@ tabs = st.tabs([
     'ワードクラウド',
     '共起ネットワークマップ',
     'クラスター分析',
-    'クロス集計',
+    'コーディング集計',
 ])
 
 with tabs[0]:
@@ -119,4 +119,4 @@ with tabs[3]:
 with tabs[4]:
     tab_clustering.render(doc_tokens, included_categories, stopwords)
 with tabs[5]:
-    tab_crosstab.render(doc_tokens, documents, doc_attrs)
+    tab_crosstab.render(doc_tokens, documents, doc_attrs, included_categories, stopwords)

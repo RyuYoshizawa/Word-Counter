@@ -5,12 +5,22 @@
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: __WC_BG__; }
   #graph { width: __WC_WIDTH__px; height: __WC_HEIGHT__px; }
-  svg { display: block; font-family: "Yu Gothic", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif; }
+  svg { display: block; font-family: "Noto Sans JP", Meiryo, "MS Gothic", "Hiragino Kaku Gothic ProN", sans-serif; }
   .node-label {
     fill: __WC_FG__;
     pointer-events: none;
     text-anchor: middle;
     dominant-baseline: central;
+  }
+  .edge-label {
+    fill: #0068C9;
+    pointer-events: none;
+    text-anchor: middle;
+    dominant-baseline: central;
+    paint-order: stroke;
+    stroke: __WC_BG__;
+    stroke-width: 3px;
+    stroke-linejoin: round;
   }
   #tooltip {
     position: absolute;
@@ -20,18 +30,43 @@
     border-radius: 6px;
     background: __WC_FG__;
     color: __WC_BG__;
-    font-family: "Yu Gothic", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+    font-family: "Noto Sans JP", Meiryo, "MS Gothic", "Hiragino Kaku Gothic ProN", sans-serif;
     font-size: 12px;
     line-height: 1.4;
     pointer-events: none;
     white-space: pre-line;
     z-index: 10;
   }
+  #downloadToolbar {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    display: flex;
+    gap: 4px;
+    z-index: 20;
+  }
+  #downloadToolbar button {
+    font-family: "Noto Sans JP", Meiryo, "MS Gothic", "Hiragino Kaku Gothic ProN", sans-serif;
+    font-size: 11px;
+    padding: 4px 8px;
+    border: 1px solid __WC_FG__;
+    border-radius: 4px;
+    background: __WC_BG__;
+    color: __WC_FG__;
+    opacity: 0.7;
+    cursor: pointer;
+  }
+  #downloadToolbar button:hover { opacity: 1; }
 </style>
 </head>
 <body>
 <div id="graph"></div>
 <div id="tooltip"></div>
+<div id="downloadToolbar">
+  <button id="btnDownloadPng1x" type="button">PNG</button>
+  <button id="btnDownloadPng2x" type="button">PNG(2x)</button>
+  <button id="btnDownloadSvg" type="button">SVG</button>
+</div>
 <script>__WC_D3_SOURCE__</script>
 <script>
 (function () {
@@ -39,37 +74,89 @@
   const width = __WC_WIDTH__;
   const height = __WC_HEIGHT__;
   const showEdgeCoef = __WC_SHOW_EDGE_LABELS__;
+  const TITLE = __WC_TITLE_JSON__;
+  const SUBTITLE = __WC_SUBTITLE_JSON__;
+  // node_type='attr'のノードは共起ネットワークマップでは属性値ハブだが、コーディング集計
+  // タブではコードを同じ枠に流用するため、表示文言を差し替え可能にしている。
+  const ATTR_KIND_LABEL = __WC_ATTR_KIND_LABEL_JSON__;
+  const ATTR_DEGREE_LABEL = __WC_ATTR_DEGREE_LABEL_JSON__;
   const FG = "__WC_FG__";
+  const BG = "__WC_BG__";
 
-  const WORD_LOW = "#83C9FF";
-  const WORD_HIGH = "#0068C9";
+  const WORD_HIGH = "#0068C9"; // 属性マッピング無し・単一サブグラフ（分割の意味が無い）用の単色
   const ATTR_COLOR = "#FF8700";
 
-  const maxFreq = Math.max(1, DATA.max_freq);
-  const sizeScale = d3.scaleLinear().domain([0, maxFreq]).range([11, 30]).clamp(true);
+  const NODE_SIZE_SCALE = __WC_NODE_SIZE_SCALE__;
 
-  const degrees = DATA.nodes.filter(d => d.node_type === 'word' && d.attr_degree != null).map(d => d.attr_degree);
-  const maxDegree = degrees.length ? Math.max(3, ...degrees) : 0;
-  const wordColorScale = d3.scaleLinear().domain([0, maxDegree]).range([WORD_LOW, WORD_HIGH]).clamp(true);
+  const maxFreq = Math.max(1, DATA.max_freq);
+  const sizeScale = d3.scaleLinear().domain([0, maxFreq])
+      .range([11 * NODE_SIZE_SCALE, 30 * NODE_SIZE_SCALE]).clamp(true);
+
+  // KH Coder実機（静止画出力）の凡例に倣い、色は「次数」（いくつの属性値ハブ/コードに
+  // 繋がっているか）ごとの淡→濃の青系離散段階で表す（従来の2点連続グラデーションから変更）。
+  // d3.interpolateBluesは連続関数だが、次数は整数なので実質的に離散段階として機能する。
+  // 属性値ノードが1つも無い場合（属性マッピング未使用）は次数の概念自体が無意味——
+  // build_graph()は属性値ノードが無くても単語ノードのattr_degreeを常に0で設定するため、
+  // 「.attr_degree != null」だけで判定すると常にtrueになり、実際には全て0なのに凡例へ
+  // 「接続属性数: 1」のような無意味な行が出てしまう不具合があった（実データで発覚）。
+  // 属性値ノードの実在有無で明示的にガードする。
+  const hasAttrNodes = DATA.nodes.some(d => d.node_type === 'attr');
+  const degrees = hasAttrNodes
+      ? DATA.nodes.filter(d => d.node_type === 'word' && d.attr_degree != null).map(d => d.attr_degree)
+      : [];
+  const maxDegree = degrees.length ? Math.max(1, ...degrees) : 0;
+  const wordColorScale = d3.scaleSequential(d3.interpolateBlues).domain([0, maxDegree]);
   const hasAttrDegree = degrees.length > 0;
+
+  // 属性マッピング無しの語×語ネットワークは、従来は色による構造情報が一切無く
+  // 「まとまり」が視覚的に全く分からなかった。KH Coder実機の「サブグラフ検出
+  // （modularity）」カラーリングに倣い、Python側（core/network_viz.pyのcompute_communities、
+  // igraphのLouvain法）で検出済みのサブグラフ番号をカテゴリカルなパレットに割り当てる。
+  const COMMUNITY_PALETTE = d3.schemeTableau10;
+  const wordCommunities = hasAttrDegree
+      ? []
+      : Array.from(new Set(DATA.nodes.filter(d => d.node_type === 'word').map(d => d.community))).sort((a, b) => a - b);
+  const useCommunityColor = wordCommunities.length > 1;
+  function communityColor(c) {
+    return COMMUNITY_PALETTE[c % COMMUNITY_PALETTE.length];
+  }
 
   function colorFor(d) {
     if (d.node_type === 'attr') return ATTR_COLOR;
     if (hasAttrDegree && d.attr_degree != null) return wordColorScale(d.attr_degree);
+    if (useCommunityColor) return communityColor(d.community);
     return WORD_HIGH;
   }
+  // KH Coder実機のバブル表現（外側=識別色の不透明な輪郭＋やや濃色の半透明塗り、
+  // 内側=淡色の完全不透明な中心）に倣う——単色30%不透明の円1枚だけだった従来版は、
+  // ラベル文字の下を通るエッジが薄く透けて見えて読みにくかった（ユーザー指摘）。
+  // 内側を完全不透明の淡色にすることで、エッジも識別色の塗りもきちんと隠れる。
+  function paleColor(color) {
+    return d3.interpolateRgb(color, BG)(0.72);
+  }
+  const OUTER_FILL_OPACITY = 0.35;
+  const OUTER_STROKE_WIDTH = 1.2;
+  const INNER_SCALE = 0.6;
 
+  const EDGE_WIDTH = 1.2; // 共起の強弱は太さではなく色の濃淡（不透明度）だけで表現する
   const weights = DATA.links.map(d => d.weight);
   const minW = weights.length ? Math.min(...weights) : 0;
   const maxW = weights.length ? Math.max(...weights) : 1;
-  const edgeWidthScale = d3.scaleLinear().domain([minW, maxW]).range([1, 5]).clamp(true);
   const edgeOpacityScale = d3.scaleLinear().domain([minW, maxW]).range([0.15, 0.85]).clamp(true);
 
-  // ラベルは頻度上位半分のみ常時表示、残りはホバー時のみツールチップで表示
-  // （全ノード常時ラベルだと大規模データで読みにくくなるため）
-  const sortedFreq = DATA.nodes.map(d => d.freq).sort((a, b) => a - b);
-  const medianFreq = sortedFreq.length ? sortedFreq[Math.floor(sortedFreq.length / 2)] : 0;
-  const labelFontSize = Math.max(8, Math.min(13, 14 - 0.02 * DATA.nodes.length));
+  const labelFontSize = __WC_LABEL_FONT_SIZE__;
+
+  // ノードの座標（x/y）はPython側（core/network_viz.py, igraphのFruchterman-Reingold
+  // レイアウト）で計算済みのものをそのまま初期位置として使う。D3側はレイアウトの主計算は
+  // 行わず、forceCollide（重なり回避）とforceBoundary（キャンバス端の安全策）のみ適用する。
+  const nodeById = new Map(DATA.nodes.map(d => [d.id, d]));
+  DATA.links.forEach(l => {
+    l.sourceNode = nodeById.get(l.source);
+    l.targetNode = nodeById.get(l.target);
+  });
+  // 属性値ハブはPython側（core/network_viz.py）でもう固定配置していないため、
+  // D3側でもfx/fyで固定しない——単語ノードと同じくforceCollide/forceBoundaryの
+  // 対象にし、他ノードとの重なりやキャンバス端はみ出しを自然に解消する。
 
   const svg = d3.select('#graph').append('svg')
       .attr('viewBox', [0, 0, width, height])
@@ -79,26 +166,62 @@
 
   const tooltip = d3.select('#tooltip');
 
+  // ノードの実際の見た目のサイズ（バブルサイズ倍率込み）を考慮した衝突・境界判定用の
+  // 半径相当値。単語は円（半径そのまま）、属性値ハブは正方形（一辺r×1.7）なので、
+  // はみ出し防止には半辺（r×0.85）を使う。
+  function nodeHalfExtent(d) {
+    const r = sizeScale(d.freq);
+    return d.node_type === 'attr' ? r * 0.85 : r;
+  }
+
+  // ノードの実際の見た目のサイズを考慮して、キャンバスの外にはみ出さないようにする
+  // ——Python側のクランプは大まかな余白しか見ておらず、バブルサイズ倍率が大きい場合に
+  // キャンバス端で見切れることがあったため（単語ノードで過去に発生・修正済み。属性値
+  // ハブは固定配置の撤廃に伴い同じ対象に含めた）。
+  // タイトル・凡例は左上に固定オーバーレイとして描画するため（後段で計算・代入）、
+  // その矩形範囲にノードが入り込まないよう合わせて弾き出す。simulationのtickは
+  // スクリプト完了後に非同期で発火するため、この時点では0のままでよい
+  // （下のタイトル・凡例描画コードが実際の値を代入してから初回tickが走る）。
+  let keepOutWidth = 0;
+  let keepOutHeight = 0;
+  function forceBoundary() {
+    return () => {
+      DATA.nodes.forEach(d => {
+        const r = nodeHalfExtent(d);
+        if (keepOutWidth > 0 && keepOutHeight > 0 && d.x < keepOutWidth + r && d.y < keepOutHeight + r) {
+          const distRight = (keepOutWidth + r) - d.x;
+          const distBottom = (keepOutHeight + r) - d.y;
+          if (distRight < distBottom) d.x = keepOutWidth + r;
+          else d.y = keepOutHeight + r;
+        }
+        d.x = Math.max(r, Math.min(width - r, d.x));
+        d.y = Math.max(r, Math.min(height - r, d.y));
+      });
+    };
+  }
+
   const simulation = d3.forceSimulation(DATA.nodes)
-      .force('link', d3.forceLink(DATA.links).id(d => d.id).distance(60).strength(0.3))
-      .force('charge', d3.forceManyBody().strength(-140))
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collide', d3.forceCollide(d => sizeScale(d.freq) + 3))
-      .alphaDecay(0.05);
+      .force('collide', d3.forceCollide(d => nodeHalfExtent(d) + 8).iterations(2))
+      .force('boundary', forceBoundary())
+      .alphaDecay(0.03);
 
   const link = zoomLayer.append('g')
       .attr('stroke', FG)
       .selectAll('line')
       .data(DATA.links)
       .join('line')
-      .attr('stroke-width', d => edgeWidthScale(d.weight))
+      .attr('stroke-width', EDGE_WIDTH)
       .attr('stroke-opacity', d => edgeOpacityScale(d.weight));
 
-  if (showEdgeCoef) {
-    link.on('mouseenter', (event, d) => {
-      showTooltip(event, `係数: ${d.weight.toFixed(2)}`);
-    }).on('mousemove', moveTooltip).on('mouseleave', hideTooltip);
-  }
+  const edgeLabel = showEdgeCoef
+      ? zoomLayer.append('g')
+          .selectAll('text')
+          .data(DATA.links)
+          .join('text')
+          .attr('class', 'edge-label')
+          .attr('font-size', Math.max(7, Math.min(10, labelFontSize - 2)))
+          .text(d => d.weight.toFixed(2))
+      : null;
 
   const nodeG = zoomLayer.append('g')
       .selectAll('g')
@@ -109,30 +232,39 @@
   nodeG.each(function (d) {
     const sel = d3.select(this);
     const r = sizeScale(d.freq);
+    const color = colorFor(d);
+    const inner = paleColor(color);
     if (d.node_type === 'attr') {
       const s = r * 1.7;
+      const si = s * INNER_SCALE;
       sel.append('rect')
           .attr('x', -s / 2).attr('y', -s / 2)
           .attr('width', s).attr('height', s)
-          .attr('fill', colorFor(d))
-          .attr('stroke', '#fff').attr('stroke-width', 1);
+          .attr('fill', color).attr('fill-opacity', OUTER_FILL_OPACITY)
+          .attr('stroke', color).attr('stroke-width', OUTER_STROKE_WIDTH);
+      sel.append('rect')
+          .attr('x', -si / 2).attr('y', -si / 2)
+          .attr('width', si).attr('height', si)
+          .attr('fill', inner);
     } else {
       sel.append('circle')
           .attr('r', r)
-          .attr('fill', colorFor(d))
-          .attr('stroke', '#fff').attr('stroke-width', 1);
+          .attr('fill', color).attr('fill-opacity', OUTER_FILL_OPACITY)
+          .attr('stroke', color).attr('stroke-width', OUTER_STROKE_WIDTH);
+      sel.append('circle')
+          .attr('r', r * INNER_SCALE)
+          .attr('fill', inner);
     }
   });
 
-  nodeG.filter(d => d.freq >= medianFreq)
-      .append('text')
+  nodeG.append('text')
       .attr('class', 'node-label')
       .attr('font-size', labelFontSize)
       .text(d => d.id);
 
   nodeG.on('mouseenter', (event, d) => {
-    const kind = d.node_type === 'attr' ? '属性値' : '単語';
-    const degreeLine = (d.node_type === 'word' && d.attr_degree != null) ? `\n接続属性数: ${d.attr_degree}` : '';
+    const kind = d.node_type === 'attr' ? ATTR_KIND_LABEL : '単語';
+    const degreeLine = (d.node_type === 'word' && d.attr_degree != null) ? `\n${ATTR_DEGREE_LABEL}: ${d.attr_degree}` : '';
     showTooltip(event, `${d.id}（${kind}・出現文書数: ${d.freq}）${degreeLine}`);
   }).on('mousemove', moveTooltip).on('mouseleave', hideTooltip);
 
@@ -150,14 +282,294 @@
 
   simulation.on('tick', () => {
     link
-        .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
-        .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+        .attr('x1', d => d.sourceNode.x).attr('y1', d => d.sourceNode.y)
+        .attr('x2', d => d.targetNode.x).attr('y2', d => d.targetNode.y);
     nodeG.attr('transform', d => `translate(${d.x},${d.y})`);
+    if (edgeLabel) {
+      edgeLabel
+          .attr('x', d => (d.sourceNode.x + d.targetNode.x) / 2)
+          .attr('y', d => (d.sourceNode.y + d.targetNode.y) / 2);
+    }
   });
 
   svg.call(d3.zoom().scaleExtent([0.3, 5]).on('zoom', (event) => {
     zoomLayer.attr('transform', event.transform);
   }));
+
+  // タイトル・凡例はzoomLayerの外（svg直下）に追加し、パン・ズームで動かない
+  // 固定オーバーレイにする。常に最前面に来るよう、他の要素より後に追加している。
+  // タイトルとプロジェクト名（サブタイトル）は横1行にまとめる（従来の2段組から変更）
+  // ——太字のタイトル部分＋レギュラーウェイトの「 / プロジェクト名」部分をtspanで分ける。
+  //
+  // 文字幅は`getBBox()`ではなくcanvas 2Dの`measureText`で測る——st.tabsは非アクティブな
+  // タブのiframeもDOMに存在させたまま裏で描画するため、このタブが最初は非表示の状態で
+  // このスクリプトが走ることが多く（実データで確認済み）、非表示のSVG要素に対する
+  // `getBBox()`は0を返してしまい、それに依存していた凡例位置・除外ゾーンの計算が
+  // 大きく壊れていた。canvasでの文字幅測定は要素の表示状態に左右されないため安定する。
+  function measureTextWidth(text, fontSize, fontWeight) {
+    const c = measureTextWidth._c || (measureTextWidth._c = document.createElement('canvas'));
+    const ctx = c.getContext('2d');
+    ctx.font = `${fontWeight} ${fontSize}px "Noto Sans JP", Meiryo, "MS Gothic", "Hiragino Kaku Gothic ProN", sans-serif`;
+    return ctx.measureText(text).width;
+  }
+
+  const titleGroup = svg.append('g');
+  const titleText = titleGroup.append('text')
+      .attr('x', 14).attr('y', 21)
+      .attr('font-size', 14).attr('font-weight', 'bold')
+      .attr('fill', FG)
+      .text(TITLE);
+  let titleContentWidth = measureTextWidth(TITLE, 14, 'bold');
+  if (SUBTITLE) {
+    const subText = ` / ${SUBTITLE}`;
+    titleText.append('tspan')
+        .attr('font-size', 10).attr('font-weight', 'normal')
+        .text(subText);
+    titleContentWidth += measureTextWidth(subText, 10, 'normal');
+  }
+  const TITLE_TOP = 5;    // 14px太字・ベースラインy=21のテキストの見た目の上端（実測値ベースの固定オフセット）
+  const TITLE_HEIGHT = 20; // 同、見た目の高さ
+  const titleBoxWidth = titleContentWidth;
+  const titleBoxBottom = TITLE_TOP + TITLE_HEIGHT;
+  titleGroup.insert('rect', 'text')
+      .attr('x', 14 - 8).attr('y', TITLE_TOP - 6)
+      .attr('width', titleBoxWidth + 16).attr('height', TITLE_HEIGHT + 12)
+      .attr('fill', BG).attr('fill-opacity', 0.85).attr('rx', 4);
+
+  // 色の凡例: KH Coder実機に倣い、次数（1〜maxDegree）ごとに1行ずつ表示する
+  // （従来の「少ない/多い」2項目のみの凡例から変更）。
+  const legendItems = [];
+  if (hasAttrDegree) {
+    for (let d = 1; d <= maxDegree; d++) {
+      legendItems.push({ type: 'circle', color: wordColorScale(d), label: `${ATTR_DEGREE_LABEL}: ${d}` });
+    }
+  } else if (useCommunityColor) {
+    // 「class」は教師あり分類（既知カテゴリへの分類）を連想させ、教師なしのコミュニティ
+    // 検出結果を指すには紛らわしいため避け、「group」を使う（ユーザーとの相談で決定）。
+    wordCommunities.forEach(c => {
+      legendItems.push({ type: 'circle', color: communityColor(c), label: `group${c + 1}` });
+    });
+  } else {
+    legendItems.push({ type: 'circle', color: WORD_HIGH, label: '単語' });
+  }
+  if (hasAttrNodes) legendItems.push({ type: 'square', color: ATTR_COLOR, label: ATTR_KIND_LABEL });
+  legendItems.push({ type: 'line', width: EDGE_WIDTH, opacity: 0.25, label: '共起弱' });
+  legendItems.push({ type: 'line', width: EDGE_WIDTH, opacity: 0.85, label: '共起強' });
+
+  // サイズの凡例: 頻度→バブル直径の対応を示す。個々のノードの頻度をそのまま目盛りに
+  // すると半端な数値になるため、d3標準の「きりの良い」目盛り生成（1/2/5×10^nパターン）
+  // で最小・中間・最大の3点だけを選ぶ。本編のバブルと同じ縮尺だと凡例内で巨大になり
+  // うるため、凡例専用の縮小スケールを使う（あくまで大小関係の目安であり、本編の正確な
+  // 縮尺とは別物——ズームで本編のバブルは拡大縮小されるが、この凡例は固定オーバーレイ
+  // のため厳密には初期表示時のスケールでしか一致しない）。
+  // 3つの円は個別の行に並べず、底辺を揃えた同心円（入れ子）1つのグラフィックにまとめ、
+  // 各円の頂点から引き出し線で数値ラベルを添える——統計図表でよく使われる「nested
+  // circle legend」の描き方で、3行使うより省スペースになる（ユーザー希望）。
+  function niceMinMidMax(mf) {
+    const ticks = d3.scaleLinear().domain([0, mf]).nice().ticks(5).filter(v => v > 0);
+    if (ticks.length <= 3) return ticks.length ? ticks : [Math.max(1, Math.round(mf))];
+    return [...new Set([ticks[0], ticks[Math.floor((ticks.length - 1) / 2)], ticks[ticks.length - 1]])];
+  }
+  const legendSizeScale = d3.scaleLinear().domain([0, maxFreq]).range([3, 13]).clamp(true);
+  const NESTED_LEADER_LEN = 14;
+  const NESTED_MIN_LABEL_GAP = 13; // フォントサイズ10のラベルが重ならない最小間隔
+  // 同心円のレイアウト（baseline=0を基準にした相対位置）を1箇所にまとめる——
+  // 行の高さ算出（先に必要）と実際の描画（後で必要）の両方で同じ結果を使うため。
+  // 値同士が近いと円の頂点（引き出し線の起点）も近くなり、ラベルが重なってしまう
+  // （実データで発覚）。円自体の半径・位置は実測値のまま変えず、ラベルの縦位置だけ
+  // 最小間隔を確保するよう底辺側から順に押し上げる——引き出し線は「本来の頂点」から
+  // 「調整後のラベル位置」へ引くので、調整が入った場合はわずかに斜めの線になる。
+  function nestedSizeLayout(vals) {
+    const radii = vals.map(v => legendSizeScale(v));
+    const naturalTopY = radii.map(r => -2 * r);
+    const labelY = naturalTopY.slice();
+    for (let i = 1; i < labelY.length; i++) {
+      if (labelY[i - 1] - labelY[i] < NESTED_MIN_LABEL_GAP) {
+        labelY[i] = labelY[i - 1] - NESTED_MIN_LABEL_GAP;
+      }
+    }
+    const topExtent = -labelY[labelY.length - 1];
+    return { radii, naturalTopY, labelY, topExtent };
+  }
+  legendItems.push({ type: 'nested-size', values: niceMinMidMax(maxFreq) });
+
+  // 凡例の幅はラベル文言（通常項目）または同心円グラフィックの実際の必要幅
+  // （円のブロック＋引き出し線＋数値ラベル）から動的に決める（従来は190固定——短縮の
+  // たびに箱の幅自体も連動して狭まるように）。通常項目のラベルは常に同じx位置
+  // （legendPadding+22）から始まる。
+  const legendPadding = 10;
+  const legendTextX = legendPadding + 22;
+  function itemRequiredWidth(item) {
+    if (item.type === 'nested-size') {
+      const maxR = legendSizeScale(Math.max(...item.values));
+      const leaderEndX = legendPadding + maxR * 2 + NESTED_LEADER_LEN;
+      const maxValueLabelWidth = Math.max(...item.values.map(v => measureTextWidth(String(v), 10, 'normal')));
+      return leaderEndX + 4 + maxValueLabelWidth + legendPadding;
+    }
+    return legendTextX + measureTextWidth(item.label, 11, 'normal') + legendPadding;
+  }
+  const legendWidth = Math.max(70, ...legendItems.map(itemRequiredWidth));
+  const legendRowHeight = 20;
+  const rowHeights = legendItems.map(item => item.type === 'nested-size'
+      ? Math.max(legendRowHeight, nestedSizeLayout(item.values).topExtent + 12)
+      : legendRowHeight);
+  const legendHeight = legendPadding * 2 + rowHeights.reduce((a, b) => a + b, 0);
+
+  // 凡例はタイトルの真下、同じ左端に配置する（従来の右上固定から変更）——ノードの
+  // レイアウトはPython側でタイトル・凡例の存在を関知しないため、この左上の矩形範囲に
+  // ノードが入り込まないよう、forceBoundary（上で定義済み）用の除外ゾーンとして
+  // keepOutWidth/Heightに実測値を代入する（simulationのtickはこの後の非同期処理なので
+  // 間に合う）。
+  const legendGap = 10;
+  const legendY = titleBoxBottom + legendGap;
+  keepOutWidth = Math.max(titleBoxWidth, legendWidth) + 14 + 16;
+  keepOutHeight = legendY + legendHeight + 16;
+
+  const legendGroup = svg.append('g')
+      .attr('transform', `translate(14, ${legendY})`);
+  legendGroup.append('rect')
+      .attr('width', legendWidth).attr('height', legendHeight)
+      .attr('fill', BG).attr('fill-opacity', 0.9)
+      .attr('stroke', FG).attr('stroke-opacity', 0.3).attr('stroke-width', 1);
+
+  const legendItemsGroup = legendGroup.append('g')
+      .attr('transform', `translate(0, ${legendPadding})`);
+  let legendCursorY = 0;
+  legendItems.forEach((item, i) => {
+    const rowH = rowHeights[i];
+    const y = legendCursorY + rowH / 2;
+    const row = legendItemsGroup.append('g');
+    if (item.type === 'nested-size') {
+      // 底辺を揃えた同心円——最小の円が一番下（底辺に近い頂点）、最大の円が一番上に
+      // なるよう、共通のcx・共通の底辺(baseline)を基準に各円のcyを決める。
+      // ラベルの縦位置（重なり対策込み）はnestedSizeLayoutで一括計算し、baseline=0
+      // 基準の相対値にここでbaselineを足して実座標にする（rowHeights算出時に使った
+      // ものと同じ計算を再利用し、結果がずれないようにする）。
+      const vals = item.values;
+      const layout = nestedSizeLayout(vals);
+      const maxR = Math.max(...layout.radii);
+      const cx = legendPadding + maxR;
+      const baseline = legendCursorY + rowH - 6;
+      vals.forEach((v, i) => {
+        const r = layout.radii[i];
+        row.append('circle')
+            .attr('cx', cx).attr('cy', baseline - r).attr('r', r)
+            .attr('fill', 'none')
+            .attr('stroke', FG).attr('stroke-opacity', 0.6).attr('stroke-width', 1);
+        row.append('line')
+            .attr('x1', cx).attr('y1', baseline + layout.naturalTopY[i])
+            .attr('x2', cx + maxR + NESTED_LEADER_LEN).attr('y2', baseline + layout.labelY[i])
+            .attr('stroke', FG).attr('stroke-opacity', 0.4).attr('stroke-width', 1);
+        row.append('text')
+            .attr('x', cx + maxR + NESTED_LEADER_LEN + 4).attr('y', baseline + layout.labelY[i] + 3)
+            .attr('font-size', 10).attr('fill', FG)
+            .text(String(v));
+      });
+    } else if (item.type === 'circle') {
+      row.append('circle')
+          .attr('cx', legendPadding + 6).attr('cy', y).attr('r', 6)
+          .attr('fill', item.color).attr('fill-opacity', OUTER_FILL_OPACITY)
+          .attr('stroke', item.color).attr('stroke-width', OUTER_STROKE_WIDTH);
+      row.append('circle')
+          .attr('cx', legendPadding + 6).attr('cy', y).attr('r', 6 * INNER_SCALE)
+          .attr('fill', paleColor(item.color));
+    } else if (item.type === 'square') {
+      row.append('rect')
+          .attr('x', legendPadding).attr('y', y - 6).attr('width', 12).attr('height', 12)
+          .attr('fill', item.color).attr('fill-opacity', OUTER_FILL_OPACITY)
+          .attr('stroke', item.color).attr('stroke-width', OUTER_STROKE_WIDTH);
+      row.append('rect')
+          .attr('x', legendPadding + 6 - 6 * INNER_SCALE).attr('y', y - 6 * INNER_SCALE)
+          .attr('width', 12 * INNER_SCALE).attr('height', 12 * INNER_SCALE)
+          .attr('fill', paleColor(item.color));
+    } else if (item.type === 'line') {
+      row.append('line')
+          .attr('x1', legendPadding).attr('x2', legendPadding + 14).attr('y1', y).attr('y2', y)
+          .attr('stroke', FG).attr('stroke-width', item.width).attr('stroke-opacity', item.opacity);
+    }
+    if (item.type !== 'nested-size') {
+      row.append('text')
+          .attr('x', legendPadding + 22).attr('y', y + 4)
+          .attr('font-size', 11).attr('fill', FG)
+          .text(item.label);
+    }
+    legendCursorY += rowH;
+  });
+
+  // ダウンロード機能: このSVGはD3がブラウザ内で描画した「生きた」DOMであり、Python側の
+  // HTML文字列には確定済みの座標が含まれていないため、サーバー側で静的な画像を再生成する
+  // のではなく、その場でクライアント側のSVG DOMをそのままシリアライズしてダウンロードする
+  // 方式にした——実際に画面に表示されているものと完全に一致することが保証される。
+  function sanitizeFilename(s) {
+    return (s || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+  }
+  const filenameBase = [sanitizeFilename(TITLE), sanitizeFilename(SUBTITLE)].filter(Boolean).join('_') || 'network';
+
+  // 書き出し用のSVG文字列を組み立てる——ページの<style>はページ本体のCSSであり、
+  // 単体のSVGファイルとして書き出す際には適用されないため、ラベルの見た目
+  // （中央揃え・edge-labelの縁取り等）を保つのに必要な最小限のCSSをSVG自身に埋め込む。
+  function buildExportSvgString() {
+    const svgClone = svg.node().cloneNode(true);
+    svgClone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    svgClone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+    const styleEl = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+    styleEl.textContent = [
+      // Illustrator等のSVGインポータはfont-family列挙の各名を実在フォントとして解決しようとし、
+      // 未インストールの名前（Noto Sans JP・Hiragino系はWindowsに標準では無い）があるたびに
+      // 「原因不明の問題が発生しました」という警告ダイアログを出す。これらはページ本体でも
+      // webフォント埋め込みが無く実際には使われていない（Meiryoにフォールバックしていた）名前
+      // なので、書き出し用スタイルからは除外し、実在するフォントのみを列挙する。
+      'text { font-family: Meiryo, "MS Gothic", sans-serif; }',
+      `.node-label { fill: ${FG}; text-anchor: middle; dominant-baseline: central; }`,
+      // 係数ラベルの背景色アウトライン（paint-order: stroke）は画面上でエッジと重なった際の
+      // 可読性のためのものだが、Illustratorでベクター編集すると縁取りが背景色の別要素として
+      // 見え、係数の真下を通るエッジが「そこだけ途切れている」ように見えてしまう。書き出し用
+      // では縁取りを外し、塗り色のみのシンプルなテキストにする。
+      `.edge-label { fill: #0068C9; text-anchor: middle; dominant-baseline: central; }`,
+    ].join('\n');
+    svgClone.insertBefore(styleEl, svgClone.firstChild);
+    return new XMLSerializer().serializeToString(svgClone);
+  }
+
+  function triggerDownload(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function downloadSvg() {
+    const blob = new Blob([buildExportSvgString()], { type: 'image/svg+xml;charset=utf-8' });
+    triggerDownload(blob, `${filenameBase}.svg`);
+  }
+
+  function downloadPng(scale) {
+    const svgBlob = new Blob([buildExportSvgString()], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = width * scale;
+      canvas.height = height * scale;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((blob) => {
+        triggerDownload(blob, `${filenameBase}${scale > 1 ? `_${scale}x` : ''}.png`);
+      }, 'image/png');
+    };
+    img.src = url;
+  }
+
+  document.getElementById('btnDownloadSvg').addEventListener('click', downloadSvg);
+  document.getElementById('btnDownloadPng1x').addEventListener('click', () => downloadPng(1));
+  document.getElementById('btnDownloadPng2x').addEventListener('click', () => downloadPng(2));
 })();
 </script>
 </body>

@@ -10,9 +10,11 @@ dependencies = [
     "networkx>=3.6.1",
     "openpyxl>=3.1.5",
     "pandas>=3.0.5",
+    "python-igraph>=1.0.0",
     "scipy>=1.18.0",
     "streamlit>=1.61.1",
     "sudachidict-core>=20260723",
+    "sudachidict-full>=20260723",
     "sudachipy>=0.6.11",
     "wordcloud>=1.9.6",
 ]

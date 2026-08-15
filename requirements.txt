@@ -1,0 +1,12 @@
+streamlit
+anthropic
+pandas
+openpyxl
+networkx
+python-igraph
+scipy
+matplotlib
+wordcloud
+sudachipy
+sudachidict_core
+fonttools
