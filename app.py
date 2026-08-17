@@ -18,6 +18,7 @@ from core.tokenizer import (
     tokenize,
 )
 from ui import (
+    auth,
     sidebar,
     tab_cleaning,
     tab_clustering,
@@ -31,6 +32,8 @@ APP_DIR = Path(__file__).parent
 
 st.set_page_config(page_title='Word_Counter', page_icon='👾', layout='wide')
 st.logo(str(APP_DIR / 'word_counter_MARK.png'), size='large')
+
+auth.require_login()
 
 st.session_state.setdefault('_tokenize_cache_key', None)
 st.session_state.setdefault('_doc_tokens_cache', [])

@@ -9,6 +9,7 @@ import streamlit as st
 from core.pos_rules import CATEGORY_ORDER, DEFAULT_INCLUDED_CATEGORIES
 from core.project import build_project, deserialize_project, serialize_project
 from core.tokenizer import available_dict_types
+from ui.auth import render_logout_button
 
 INPUT_METHODS = ['テキストファイル', '貼り付け', 'Excel（ID・属性列あり）']
 
@@ -91,6 +92,10 @@ def render_sidebar() -> dict:
     if st.session_state['project'] is not None:
         st.sidebar.divider()
         _render_project_actions(st.session_state['project'])
+
+    st.sidebar.divider()
+    with st.sidebar:
+        render_logout_button()
 
     return {
         'documents': documents,
