@@ -41,23 +41,23 @@ def render(tokens: list, included_categories: set, stopwords: set[str] | None = 
         st.error('日本語フォントが見つかりませんでした。日本語が文字化けする可能性があります。')
 
     max_words = st.slider('最大語数', min_value=20, max_value=300, value=100, step=10)
-    mask_choice = st.selectbox('マスク形状', ['なし'] + MASK_SHAPES)
+    mask_choice = st.selectbox('マスク形状', ['なし'] + MASK_SHAPES, index=1)
     font_weight = st.slider(
-        '文字の太さ（ウェイト）', min_value=100, max_value=900, value=600, step=50,
+        '文字の太さ（ウェイト）', min_value=100, max_value=900, value=350, step=50,
         help='400が標準的な太さ、700がBold相当。Noto Sans JPが可変フォントであることを'
              '活かし、100（極細）〜900（極太）まで自由に調整できる。',
     )
-    color_mode = st.selectbox('色分けモード', COLOR_MODES)
+    color_mode = st.selectbox('色分けモード', COLOR_MODES, index=1)
 
     col_size, col_curve = st.columns(2)
     with col_size:
         max_font_size_ratio = st.slider(
-            '最大文字サイズ', min_value=0.15, max_value=0.6, value=0.32, step=0.01,
+            '最大文字サイズ', min_value=0.15, max_value=0.6, value=0.25, step=0.01,
             help='最も頻度が高い語の文字サイズ（表示エリアの高さに対する比率）。',
         )
     with col_curve:
         relative_scaling = st.slider(
-            '文字サイズのメリハリ', min_value=0.0, max_value=1.0, value=0.4, step=0.05,
+            '文字サイズのメリハリ', min_value=0.0, max_value=1.0, value=0.5, step=0.05,
             help='0に近いほど頻度差が均され語ごとの大きさが揃う。1に近いほど頻度差がそのまま'
                  'サイズ差になり、最頻語が際立つ。',
         )
