@@ -1,7 +1,8 @@
 """
 tab_wordcloud.py
 ワードクラウドタブ。マスク形状（雲のような輪郭）、品詞別4色塗分け／モノクロ3段階
-ネガポジ（実験）、太字、高解像度ダウンロードに対応する。
+ネガポジ（実験）、太字、高解像度ダウンロードに対応する。「複合語を含める」チェックボックスで
+出現語一覧の複合語検出結果を単語と混ぜて集計できる。
 """
 
 import streamlit as st
@@ -28,14 +29,22 @@ _POS_ASSIGNABLE_CATEGORIES = [c for c in CATEGORY_ORDER if c not in {'その他'
 _DEFAULT_SLOT_CATEGORIES = ['名詞', '動詞', '形容詞', '固有名詞']
 
 
-def render(tokens: list, included_categories: set, stopwords: set[str] | None = None) -> None:
+def render(tokens: list, included_categories: set, stopwords: set[str] | None = None,
+           doc_compounds: list | None = None) -> None:
     st.subheader('ワードクラウド')
 
-    if not tokens:
+    flat_compounds = [t for dc in (doc_compounds or []) for t in dc]
+    if not tokens and not flat_compounds:
         st.info('データ準備タブでテキストを読み込んでください。')
         return
 
     st.caption(pos_filter_caption(included_categories))
+
+    include_compounds = st.checkbox(
+        '複合語を含める', value=False,
+        help='出現語一覧の複合語検出結果（Mode A/C差分）を単語と混ぜて集計します。',
+    )
+    display_tokens = tokens + flat_compounds if include_compounds else tokens
 
     if resolve_japanese_font() is None:
         st.error('日本語フォントが見つかりませんでした。日本語が文字化けする可能性があります。')
@@ -63,13 +72,13 @@ def render(tokens: list, included_categories: set, stopwords: set[str] | None = 
         )
 
     if color_mode == '品詞別4色':
-        color_func = _render_pos_color_controls(tokens, included_categories, stopwords)
+        color_func = _render_pos_color_controls(display_tokens, included_categories, stopwords)
     elif color_mode == '多色ランダム':
         color_func = _render_multicolor_color_controls()
     else:
         color_func = _render_sentiment_color_controls()
 
-    word_df = word_frequency_table(tokens, included_categories, stopwords)
+    word_df = word_frequency_table(display_tokens, included_categories, stopwords)
     if word_df.empty:
         st.warning('対象となる語がありません。品詞フィルタを見直してください。')
         return

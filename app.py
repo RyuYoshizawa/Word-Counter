@@ -116,7 +116,7 @@ with tabs[1]:
     tab_pos_freq.render(tokens, doc_tokens, doc_ids, doc_compounds, doc_tokens_mode_c,
                          included_categories, stopwords)
 with tabs[2]:
-    tab_wordcloud.render(tokens, included_categories, stopwords)
+    tab_wordcloud.render(tokens, included_categories, stopwords, doc_compounds)
 with tabs[3]:
     tab_network.render(doc_tokens, doc_attrs, included_categories, stopwords)
 with tabs[4]:
