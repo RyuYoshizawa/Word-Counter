@@ -1,8 +1,8 @@
 """
 tab_wordcloud.py
 ワードクラウドタブ。マスク形状（雲のような輪郭）、品詞別4色塗分け／モノクロ3段階
-ネガポジ（実験）、太字、高解像度ダウンロードに対応する。「複合語を含める」チェックボックスで
-出現語一覧の複合語検出結果を単語と混ぜて集計できる。
+ネガポジ（実験）、太字、高解像度ダウンロードに対応する。複合語を含めるかどうかは
+サイドバーの品詞フィルタ（「複合語を含める」）で全タブ共通に設定する。
 """
 
 import streamlit as st
@@ -25,12 +25,12 @@ from ui.common import pos_filter_caption
 
 COLOR_MODES = ['品詞別4色', '多色ランダム', 'モノクロ3段階ネガポジ（実験）']
 RESOLUTION_OPTIONS = {'標準': 1.0, '高解像度（2倍）': 2.0, '最高解像度（4倍）': 4.0}
-_POS_ASSIGNABLE_CATEGORIES = [c for c in CATEGORY_ORDER if c not in {'その他'}]
+_POS_ASSIGNABLE_CATEGORIES = CATEGORY_ORDER
 _DEFAULT_SLOT_CATEGORIES = ['名詞', '動詞', '形容詞', '固有名詞']
 
 
 def render(tokens: list, included_categories: set, stopwords: set[str] | None = None,
-           doc_compounds: list | None = None) -> None:
+           doc_compounds: list | None = None, include_compounds: bool = False) -> None:
     st.subheader('ワードクラウド')
 
     flat_compounds = [t for dc in (doc_compounds or []) for t in dc]
@@ -40,10 +40,6 @@ def render(tokens: list, included_categories: set, stopwords: set[str] | None = 
 
     st.caption(pos_filter_caption(included_categories))
 
-    include_compounds = st.checkbox(
-        '複合語を含める', value=False,
-        help='出現語一覧の複合語検出結果（Mode A/C差分）を単語と混ぜて集計します。',
-    )
     display_tokens = tokens + flat_compounds if include_compounds else tokens
 
     if resolve_japanese_font() is None:

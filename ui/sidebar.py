@@ -80,6 +80,11 @@ def render_sidebar() -> dict:
         default = cat in DEFAULT_INCLUDED_CATEGORIES
         if st.sidebar.checkbox(cat, value=default, key=f'pos_cat_{cat}'):
             included_categories.add(cat)
+    include_compounds = st.sidebar.checkbox(
+        '複合語を含める', value=False, key='pos_include_compounds',
+        help='出現語一覧の複合語検出結果（Mode A/C差分）を単語と混ぜて集計します'
+             '（ワードクラウド等、対応するタブに反映されます）。',
+    )
 
     st.sidebar.divider()
     st.sidebar.subheader('LLM設定（表記ゆれ統合用）')
@@ -103,6 +108,7 @@ def render_sidebar() -> dict:
         'forced_terms': forced_terms,
         'stopwords': stopwords,
         'included_categories': included_categories,
+        'include_compounds': include_compounds,
         'api_key': api_key,
     }
 
