@@ -4,6 +4,7 @@ wordcloud_gen.py
 太字表示・高解像度出力に対応する。
 """
 
+import html
 import random
 from typing import Callable
 
@@ -115,6 +116,72 @@ def make_sentiment_color_func(neg_threshold: float, pos_threshold: float) -> Cal
         return '#BBBBBB'
 
     return _color_func
+
+
+def to_svg_outlined(wc: WordCloud) -> str:
+    """
+    WordCloudのレイアウト結果を、文字をアウトライン（パス）化したSVG文字列にする。
+    WordCloud.to_svg()は文字を<text>のままフォント名で参照するため、フォントが無い環境
+    （PowerPoint・Illustrator等）で別フォントに置き換わり字形・位置がずれる——ここでは
+    fontToolsでグリフの輪郭を直接取り出して<path>にするので、フォント無しで同じ見た目になる
+    （代わりに文字としては編集できない）。座標はto_image()の貼り付け位置と一致するよう
+    求める（下記コメント参照）。横書きのみ対応（generate_wordcloudが
+    prefer_horizontal=1.0で縦書きを禁止しているため）。字間はhmtxの送り幅のみ（カーニング無し）。
+    """
+    from fontTools.pens.svgPathPen import SVGPathPen
+    from fontTools.pens.transformPen import TransformPen
+    from fontTools.ttLib import TTFont
+    from PIL import ImageFont
+
+    if wc.mask is not None:
+        height, width = wc.mask.shape[:2]
+    else:
+        height, width = wc.height, wc.width
+    scale = wc.scale
+
+    font = TTFont(wc.font_path, fontNumber=0)
+    glyph_set = font.getGlyphSet()
+    cmap = font.getBestCmap()
+    units_per_em = font['head'].unitsPerEm
+
+    def ntos(v: float) -> str:
+        return f'{v:.2f}'.rstrip('0').rstrip('.')
+
+    out_w, out_h = ntos(width * scale), ntos(height * scale)
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{out_w}" height="{out_h}" '
+        f'viewBox="0 0 {out_w} {out_h}">'
+    ]
+    if wc.background_color is not None:
+        parts.append(f'<rect width="{out_w}" height="{out_h}" fill="{html.escape(wc.background_color)}"/>')
+
+    for (word, _count), font_size, (row, col), _orientation, color in wc.layout_:
+        size = int(font_size * scale)
+        px_per_unit = size / units_per_em
+        pil_font = ImageFont.truetype(wc.font_path, size)
+        ascent = pil_font.getmetrics()[0]
+        # to_image()はTransposedFont経由でアンカーが効かず、語ごとのマスク（getbbox()の
+        # 左上=語の外接矩形の左上）を(col, row)に貼る——そのため原点・ベースラインは
+        # 貼り付け位置からbboxのオフセット分を引いて求める（WordCloud.to_svg()と同じ式）。
+        bbox_left, bbox_top = pil_font.getbbox(word)[:2]
+        pen_x = col * scale - bbox_left
+        baseline_y = row * scale + ascent - bbox_top
+
+        pen = SVGPathPen(glyph_set, ntos=ntos)
+        for ch in word:
+            name = cmap.get(ord(ch), '.notdef')
+            if name not in glyph_set:
+                continue
+            glyph = glyph_set[name]
+            glyph.draw(TransformPen(pen, (px_per_unit, 0, 0, -px_per_unit, pen_x, baseline_y)))
+            pen_x += glyph.width * px_per_unit
+
+        commands = pen.getCommands()
+        if commands:
+            parts.append(f'<path fill="{html.escape(color)}" d="{commands}"/>')
+
+    parts.append('</svg>')
+    return '\n'.join(parts)
 
 
 def to_png_bytes(wc: WordCloud) -> bytes:

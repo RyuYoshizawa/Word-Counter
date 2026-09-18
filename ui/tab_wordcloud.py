@@ -20,6 +20,7 @@ from core.wordcloud_gen import (
     make_pos_color_func,
     make_sentiment_color_func,
     to_png_bytes,
+    to_svg_outlined,
 )
 from ui.common import pos_filter_caption
 
@@ -84,6 +85,16 @@ def render(tokens: list, included_categories: set, stopwords: set[str] | None = 
     wc = generate_wordcloud(freq, mask_shape=mask_shape, color_func=color_func, font_weight=font_weight,
                              max_font_size_ratio=max_font_size_ratio, relative_scaling=relative_scaling)
     st.image(wc.to_array(), use_container_width=True)
+
+    # SVGは表示中のwc自身から作る（ワードクラウドは実行のたびに配置・配色が変わるため、
+    # 別途生成し直すと画面と違う見た目になる）。data=callableにより、クリック時にだけ
+    # 生成し、on_click='ignore'で再実行（＝配置のシャッフル）も起こさない。
+    st.download_button(
+        '💾 SVG（ベクター）をダウンロード', data=lambda: to_svg_outlined(wc).encode('utf-8'),
+        file_name='wordcloud.svg', mime='image/svg+xml', on_click='ignore',
+        help='文字をアウトライン化したSVGです。PowerPointへの貼り付けやIllustratorでの編集に'
+             '使えます（フォントが無くても同じ見た目になりますが、文字としての編集はできません）。',
+    )
 
     resolution_label = st.selectbox('ダウンロード解像度', list(RESOLUTION_OPTIONS.keys()))
     if st.button('PNGを生成してダウンロード'):
