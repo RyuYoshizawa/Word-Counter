@@ -16,7 +16,7 @@ INPUT_METHODS = ['テキストファイル', '貼り付け', 'Excel（ID・属�
 # 新規プロジェクト開始時にクリアすべきsession_stateキー（APIキーは意図的に含めない）
 _PROJECT_RESET_KEYS = [
     'input_method', 'pasted_text_input', 'dict_type', 'forced_terms_text', 'stopwords_text',
-    'xlsx_documents', 'xlsx_text_col', 'xlsx_id_col', 'xlsx_attr_cols',
+    'xlsx_documents', 'xlsx_sheet', '_xlsx_source_signature', 'xlsx_text_col', 'xlsx_id_col', 'xlsx_attr_cols',
     '_restored_documents', '_restored_joined_text', '_loaded_project_file_id',
     'variant_map', 'pending_variant_groups', 'codebook_text',
     'new_project_name', 'new_project_description',
@@ -302,11 +302,33 @@ def _render_excel_upload() -> list[dict]:
     if uploaded is None:
         return st.session_state.get('xlsx_documents', [])
 
-    df = pd.read_excel(uploaded)
+    workbook = pd.ExcelFile(uploaded)
+    sheet_names = workbook.sheet_names
+    if len(sheet_names) > 1:
+        sheet_name = st.sidebar.selectbox(
+            'シート', sheet_names, key='xlsx_sheet',
+            help='読み込むシートを選びます。シートを変えたら、列の選択と「この内容で読み込む」をやり直してください。',
+        )
+    else:
+        sheet_name = sheet_names[0]
+
+    # ファイルまたはシートが変わると列の顔ぶれが変わる。前の列名を指したままの列選択の
+    # session_stateが残ると、新しい選択肢に存在しない値でエラー/意図しない選択になるため破棄する。
+    source_signature = (uploaded.file_id, sheet_name)
+    if st.session_state.get('_xlsx_source_signature') != source_signature:
+        for key in ('xlsx_text_col', 'xlsx_id_col', 'xlsx_attr_cols'):
+            st.session_state.pop(key, None)
+        st.session_state['_xlsx_source_signature'] = source_signature
+
+    df = workbook.parse(sheet_name)
+    if df.columns.empty:
+        st.sidebar.warning(f'シート「{sheet_name}」にデータがありません。別のシートを選んでください。')
+        return st.session_state.get('xlsx_documents', [])
+
     with st.sidebar.expander('プレビュー（先頭5行）', expanded=False):
         st.dataframe(df.head())
 
-    text_col = st.sidebar.selectbox('自由記述の列', df.columns, key='xlsx_text_col')
+    text_col =st.sidebar.selectbox('自由記述の列', df.columns, key='xlsx_text_col')
     id_col = st.sidebar.selectbox('IDの列（任意）', ['(なし・自動採番)'] + list(df.columns), key='xlsx_id_col')
     attr_options = [c for c in df.columns if c not in {text_col, id_col}]
     attr_cols = st.sidebar.multiselect(

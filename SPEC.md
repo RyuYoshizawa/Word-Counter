@@ -65,7 +65,7 @@ Word_Counterの作業単位は「プロジェクト」。`st.session_state['proj
 サイドバーの「入力方法」で3択（テキストファイル/貼り付け/Excel）を切り替える。入力方法によらず、内部では統一形状`documents: list[{'id': str, 'text': str, 'attrs': dict}]`に変換してから後続処理（トークナイズ以降）に渡す（`ui/sidebar.py`）。テキストファイル/貼り付けは改行区切りの各行を1文書とし、`id`は`L0001`形式の自動採番、`attrs`は空dict。
 
 #### 4.1.0 Excelアップロード（ID・属性列あり）
-After Coderの「自由回答一覧 Chunk A」列マッピングUIを踏襲。Excelファイルをアップロード → 先頭5行プレビュー → 自由記述列（selectbox）・IDの列（任意、selectbox、未選択なら`L0001`形式で自動採番）・属性として使う列（multiselect、複数選択可・任意）を選択 → 「この内容で読み込む」ボタンで明示的に確定（列選択自体は都度session_stateに反映されるが、`documents`への変換はボタン確定時のみ発生し、After Coderと同じ「選択即反映ではなく明示確定」パターン）。属性値は文字列化して保持し、欠損セルは`attrs`から除外する。属性は集計・共起ネットワークでのマッピングに使われ、単語の判定自体には使われない（After Coderの`attrs`と同じ位置づけ）。実装は[ui/sidebar.py](ui/sidebar.py)の`_render_excel_upload`。
+After Coderの「自由回答一覧 Chunk A」列マッピングUIを踏襲。Excelファイルをアップロード → （複数シートがあれば読み込むシートを選択。シートやファイルを変えると列選択のsession_stateを破棄する——前のシートの列名を指したままだと新しい選択肢に無い値になるため。データの無いシートは警告を出し、単一シートのファイルでは選択欄を出さない）→ 先頭5行プレビュー → 自由記述列（selectbox）・IDの列（任意、selectbox、未選択なら`L0001`形式で自動採番）・属性として使う列（multiselect、複数選択可・任意）を選択 → 「この内容で読み込む」ボタンで明示的に確定（列選択自体は都度session_stateに反映されるが、`documents`への変換はボタン確定時のみ発生し、After Coderと同じ「選択即反映ではなく明示確定」パターン）。属性値は文字列化して保持し、欠損セルは`attrs`から除外する。属性は集計・共起ネットワークでのマッピングに使われ、単語の判定自体には使われない（After Coderの`attrs`と同じ位置づけ）。実装は[ui/sidebar.py](ui/sidebar.py)の`_render_excel_upload`。
 
 #### 4.1.1 強制抽出（Phase 2）
 トークナイズ前の文字列保護方式。強制抽出リストの語句をUnicode私用領域のプレースホルダに置換 → Sudachiでトークナイズ → プレースホルダを元の語句（単一トークン、品詞カテゴリ「強制抽出」）に復元。リストの上にある語句ほど優先され、一度プレースホルダ化された箇所は後続の語句の置換対象にならない（最長一致ではなくリスト順で重なりを解決する、KH Coderの仕様を踏襲）。実装は[core/tokenizer.py](core/tokenizer.py)の`protect_forced_terms`/`restore_forced_tokens`。
